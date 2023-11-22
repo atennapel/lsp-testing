@@ -1,8 +1,6 @@
 import * as vscode from 'vscode';
 import { extensionInstance } from './core/extension';
 
-const outputChannel = vscode.window.createOutputChannel("Albert")
-
 export function activate(context: vscode.ExtensionContext) {
 	//Set the context of the extension instance
 	extensionInstance.setContext(context);

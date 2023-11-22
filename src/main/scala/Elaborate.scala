@@ -20,6 +20,7 @@ object Elaborate:
   private def checkTy(ty: S.Ty)(implicit ctx: Ctx): Ty = ty match
     case S.TPos(pos, ty)  => checkTy(ty)(ctx.enter(pos))
     case S.TNat           => TNat
+    case S.TBool          => TBool
     case S.TFun(pty, rty) => TFun(checkTy(pty), checkTy(rty))
     case S.THole          => err(s"holes are not supported in types")
 
@@ -34,6 +35,7 @@ object Elaborate:
 
   private def check(tm: S.Tm, ty: Ty)(implicit ctx: Ctx): Tm = (tm, ty) match
     case (S.Pos(pos, tm), _) => check(tm, ty)(ctx.enter(pos))
+    case (S.Hole(_), _)      => err(s"hole with type $ty")
     case (S.Lam(x, None, b), TFun(pty, rty)) =>
       val eb = check(b, rty)(ctx.bind(x, pty))
       Lam(x, pty, eb)
@@ -41,6 +43,16 @@ object Elaborate:
       val (ev, vt) = checkOrInfer(v, t)
       val eb = check(b, ty)(ctx.bind(x, vt))
       Let(x, vt, ev, eb)
+    case (S.If(c, a, b), _) =>
+      val ec = check(c, TBool)
+      val ea = check(a, ty)
+      val eb = check(b, ty)
+      If(ec, ea, eb)
+    case (S.Iterate(n, z, s), _) =>
+      val en = check(n, TNat)
+      val ez = check(z, ty)
+      val es = check(s, TFun(TNat, TFun(ty, ty)))
+      Iterate(en, ez, es)
     case _ =>
       val (etm, ety) = infer(tm)
       if ety != ty then err(s"type mismatch, expected $ty but got $ety")
@@ -49,6 +61,8 @@ object Elaborate:
   private def infer(tm: S.Tm)(implicit ctx: Ctx): (Tm, Ty) = tm match
     case S.Pos(pos, tm) => infer(tm)(ctx.enter(pos))
     case S.NatLit(v)    => (NatLit(v), TNat)
+    case S.BoolLit(b)   => (BoolLit(b), TBool)
+    case S.Succ         => (Succ, TFun(TNat, TNat))
     case S.Hole(_)      => err(s"cannot infer hole")
     case S.Var(x) =>
       ctx.lookup(x) match
@@ -75,6 +89,16 @@ object Elaborate:
       val (ev, vt) = checkOrInfer(v, t)
       val (eb, rt) = infer(b)(ctx.bind(x, vt))
       (Let(x, vt, ev, eb), rt)
+    case S.If(c, a, b) =>
+      val ec = check(c, TBool)
+      val (ea, rty) = infer(a)
+      val eb = check(b, rty)
+      (If(ec, ea, eb), rty)
+    case S.Iterate(n, z, s) =>
+      val en = check(n, TNat)
+      val (ez, rty) = infer(z)
+      val es = check(s, TFun(TNat, TFun(rty, rty)))
+      (Iterate(en, ez, es), rty)
 
   private def elaborate(d: S.Def): Def = d match
     case S.Def(pos, x, ty, v) =>

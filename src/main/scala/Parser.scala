@@ -20,7 +20,15 @@ object Parser:
       keywords = Set(
         "def",
         "let",
-        "Nat"
+        "Nat",
+        "Bool",
+        "True",
+        "False",
+        "S",
+        "if",
+        "then",
+        "else",
+        "iterate"
       ),
       operators = Set(
         "=",
@@ -88,15 +96,20 @@ object Parser:
         <|> ("(" *> tm <* ")")
         <|> attempt(holeP)
         <|> natural.map(NatLit.apply)
+        <|> ("True" #> BoolLit(true))
+        <|> ("False" #> BoolLit(false))
+        <|> ("S" #> Succ)
         <|> ident.map(x => Var(x))
     )
 
     private val hole = Hole(None)
 
-    lazy val tm: Parsley[Tm] = positioned(let <|> lam <|> app)
+    lazy val tm: Parsley[Tm] = positioned(
+      let <|> lam <|> ifP <|> iterateP <|> app
+    )
 
     lazy val tyAtom: Parsley[Ty] = tpositioned(
-      ("(" *> ty <* ")") <|> ("Nat" #> TNat)
+      ("(" *> ty <* ")") <|> ("Nat" #> TNat) <|> ("Bool" #> TBool)
     )
 
     lazy val ty: Parsley[Ty] =
@@ -134,6 +147,18 @@ object Parser:
       positioned(
         ("\\" *> many(defParam) <~> "=>" *> tm).map(lamFromLamParams)
       )
+
+    private lazy val ifP: Parsley[Tm] = positioned(
+      ("if" *> tm <~> "then" *> tm <~> "else" *> tm).map { case ((c, a), b) =>
+        If(c, a, b)
+      }
+    )
+
+    private lazy val iterateP: Parsley[Tm] = positioned(
+      ("iterate" *> atom <~> atom <~> (lam <|> atom)).map { case ((n, z), s) =>
+        Iterate(n, z, s)
+      }
+    )
 
     private lazy val app: Parsley[Tm] =
       precedence[Tm](appAtom <|> lam)(

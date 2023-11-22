@@ -13,7 +13,7 @@ import {
 
 const outputChannel = vscode.window.createOutputChannel("Lang");
 
-export class BallerinaExtension {
+export class LangExtension {
   private languageClient?: LanguageClient;
   private context?: vscode.ExtensionContext;
 
@@ -82,4 +82,4 @@ function getServerOptions() {
   return serverOptions;
 }
 
-export const extensionInstance = new BallerinaExtension();
+export const extensionInstance = new LangExtension();
