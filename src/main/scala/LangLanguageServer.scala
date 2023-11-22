@@ -15,7 +15,9 @@ class LangLanguageServer extends LanguageServer with LanguageClientAware:
 
   def getClient: LanguageClient = client.get
 
-  override def initialize(params: InitializeParams): CompletableFuture[InitializeResult] =
+  override def initialize(
+      params: InitializeParams
+  ): CompletableFuture[InitializeResult] =
     val response = new InitializeResult(new ServerCapabilities)
     response.getCapabilities.setTextDocumentSync(TextDocumentSyncKind.Full)
     clientCapabilities = Some(params.getCapabilities)
@@ -26,8 +28,14 @@ class LangLanguageServer extends LanguageServer with LanguageClientAware:
   override def initialized(params: InitializedParams): Unit =
     if isDynamicCompletionRegistration then
       val options = new CompletionRegistrationOptions
-      val registration = new Registration(UUID.randomUUID.toString, "textDocument/completion", options)
-      client.foreach(_.registerCapability(new RegistrationParams(List(registration).asJava)))
+      val registration = new Registration(
+        UUID.randomUUID.toString,
+        "textDocument/completion",
+        options
+      )
+      client.foreach(
+        _.registerCapability(new RegistrationParams(List(registration).asJava))
+      )
 
   override def shutdown(): CompletableFuture[Object] =
     shutdownStatus = 0
@@ -35,7 +43,8 @@ class LangLanguageServer extends LanguageServer with LanguageClientAware:
 
   override def exit(): Unit = System.exit(shutdownStatus)
 
-  override def getTextDocumentService(): TextDocumentService = textDocumentService
+  override def getTextDocumentService(): TextDocumentService =
+    textDocumentService
 
   override def getWorkspaceService(): WorkspaceService = workspaceService
 
