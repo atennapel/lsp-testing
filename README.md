@@ -7,7 +7,8 @@ References:
 TODO:
 - [x] Add booleans and if-then-else
 - [x] Add Nat iteration
-- [ ] Add hover support for types
+- [x] Add hover support for types
+- [ ] Add hover support for primitives and constructs
 - [ ] Add ctrl-click for go-to definition/use
 - [ ] Add syntax highlighting
 - [ ] Add modules

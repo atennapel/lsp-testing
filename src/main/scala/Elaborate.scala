@@ -66,10 +66,10 @@ object Elaborate:
     case S.Hole(_)      => err(s"cannot infer hole")
     case S.Var(x) =>
       ctx.lookup(x) match
-        case Some(ty) => (Var(x), ty)
+        case Some(ty) => (Var(x, ty, ctx.pos), ty)
         case None =>
           globals.get(x) match
-            case Some(ty) => (Global(x), ty)
+            case Some(ty) => (Global(x, ty, ctx.pos), ty)
             case None     => err(s"undefined variable $x")
     case S.Lam(x, ty, b) =>
       ty match
@@ -106,7 +106,7 @@ object Elaborate:
       if globals.get(x).isDefined then err(s"duplicate definition $x")
       val (etm, ety) = checkOrInfer(v, ty)
       globals += (x -> ety)
-      Def(x, ety, etm)
+      Def(pos, x, ety, etm)
 
   def elaborate(d: List[S.Def]): List[Def] =
     globals.clear()

@@ -1,4 +1,5 @@
 object Core:
+  type PosInfo = (Int, Int) // line, col
   type Name = String
 
   enum Ty:
@@ -12,12 +13,12 @@ object Core:
       case TFun(pty, rty) => s"($pty -> $rty)"
   export Ty.*
 
-  final case class Def(name: Name, ty: Ty, value: Tm):
+  final case class Def(pos: PosInfo, name: Name, ty: Ty, value: Tm):
     override def toString: String = s"def $name : $ty = $value"
 
   enum Tm:
-    case Var(name: Name)
-    case Global(name: Name)
+    case Var(name: Name, ty: Ty, pos: PosInfo)
+    case Global(name: Name, ty: Ty, pos: PosInfo)
     case NatLit(value: Int)
     case BoolLit(value: Boolean)
     case Succ
@@ -28,8 +29,8 @@ object Core:
     case Iterate(scrut: Tm, ifZ: Tm, ifS: Tm)
 
     override def toString: String = this match
-      case Var(x)           => s"$x"
-      case Global(x)        => s"$x"
+      case Var(x, _, _)     => s"$x"
+      case Global(x, _, _)  => s"$x"
       case NatLit(n)        => s"$n"
       case Succ             => "S"
       case BoolLit(b)       => if b then "True" else "False"

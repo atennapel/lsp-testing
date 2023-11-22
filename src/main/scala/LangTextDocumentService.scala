@@ -9,7 +9,7 @@ import scala.util.Try
 import scala.collection.mutable
 
 import Parser.defsParser
-import Core.Def
+import Core.*
 import Elaborate.elaborate
 import scala.util.Success
 import scala.util.Failure
@@ -19,7 +19,9 @@ class LangTextDocumentService(langServer: LangLanguageServer)
     extends TextDocumentService:
   private val logger = Logger.instance
 
-  private val docMap: mutable.Map[String, String] = mutable.Map.empty
+  private final case class DocInfo(text: String, defs: Option[List[Def]])
+
+  private val docMap: mutable.Map[String, DocInfo] = mutable.Map.empty
 
   private def parseAndElaborate(txt: String): Try[List[Def]] =
     defsParser.parse(txt).toTry.flatMap(ds => Try(elaborate(ds)))
@@ -30,12 +32,13 @@ class LangTextDocumentService(langServer: LangLanguageServer)
     val col = dropped.dropWhile(_ != ',').drop(9).trim
     (line.toInt - 1, col.toInt - 1)
 
-  private def handleFile(uri: String, txt: String): Unit =
+  private def handleFile(uri: String, txt: String): Option[List[Def]] =
     parseAndElaborate(txt) match
       case Success(defs) =>
         logger.log(s"typecheck success: $defs")
         val diags = new PublishDiagnosticsParams(uri, List().asJava)
         langServer.getClient.publishDiagnostics(diags)
+        Some(defs)
       case Failure(exc) =>
         exc match
           case err: Exception if err.getMessage.startsWith("ParseError:") =>
@@ -45,6 +48,7 @@ class LangTextDocumentService(langServer: LangLanguageServer)
             val diag = new Diagnostic(range, err.getMessage)
             val diags = new PublishDiagnosticsParams(uri, List(diag).asJava)
             langServer.getClient.publishDiagnostics(diags)
+            None
           case err: ElaborateError =>
             logger.log(err.toString)
             val pos = new Position(err.ctx.pos._1 - 1, err.ctx.pos._2 - 1)
@@ -52,14 +56,15 @@ class LangTextDocumentService(langServer: LangLanguageServer)
             val diag = new Diagnostic(range, err.getMessage)
             val diags = new PublishDiagnosticsParams(uri, List(diag).asJava)
             langServer.getClient.publishDiagnostics(diags)
+            None
           case _ => throw exc
 
   override def didOpen(params: DidOpenTextDocumentParams): Unit =
     val uri = params.getTextDocument.getUri
     val text = params.getTextDocument().getText()
     logger.log(s"didOpen $uri")
-    docMap(uri) = text
-    handleFile(uri, text)
+    val defs = handleFile(uri, text)
+    docMap(uri) = DocInfo(text, defs)
 
   private def getIx(s: String, line: Int, col: Int): Int =
     s.linesIterator.toList(line)(col)
@@ -78,8 +83,8 @@ class LangTextDocumentService(langServer: LangLanguageServer)
     }
      */
     val newTxt = params.getContentChanges().get(0).getText()
-    docMap(uri) = newTxt
-    handleFile(uri, newTxt)
+    val defs = handleFile(uri, newTxt)
+    docMap(uri) = DocInfo(newTxt, defs)
 
   override def didClose(params: DidCloseTextDocumentParams): Unit =
     logger.log(s"didClose ${params.getTextDocument.getUri}")
@@ -101,3 +106,51 @@ class LangTextDocumentService(langServer: LangLanguageServer)
       item.setKind(CompletionItemKind.Snippet)
       Either.forLeft(List(item).asJava)
     }
+
+  override def hover(params: HoverParams): CompletableFuture[Hover] =
+    CompletableFuture.supplyAsync { () =>
+      val uri = params.getTextDocument().getUri()
+      logger.log(s"hover $uri")
+      val info = docMap(uri)
+      info.defs match
+        case None => null
+        case Some(defs) =>
+          findPos(defs, params.getPosition()) match
+            case None => null
+            case Some(ty) =>
+              val h = new Hover
+              h.setContents(
+                new MarkupContent(MarkupKind.PLAINTEXT, ty.toString)
+              )
+              h
+    }
+
+  private def findPos(defs: List[Def], pos: Position): Option[Ty] =
+    val i = defs.takeWhile { d => d.pos._1 < (pos.getLine() + 1) }.size
+    val d = defs.drop(i).head
+    findPos(d, pos: Position)
+
+  private def findPos(d: Def, pos: Position): Option[Ty] =
+    findPos(d.value, pos)
+
+  private def findPos(t: Tm, pos: Position): Option[Ty] =
+    t match
+      case Var(x, ty, p) =>
+        if posMatches(p, x.size, pos) then Some(ty) else None
+      case Global(x, ty, p) =>
+        if posMatches(p, x.size, pos) then Some(ty) else None
+      case NatLit(value)       => None
+      case BoolLit(value)      => None
+      case Succ                => None
+      case Lam(name, ty, body) => findPos(body, pos)
+      case App(fn, arg)        => findPos(fn, pos).orElse(findPos(arg, pos))
+      case Let(name, ty, value, body) =>
+        findPos(value, pos).orElse(findPos(body, pos))
+      case If(c, a, b) =>
+        findPos(c, pos).orElse(findPos(a, pos)).orElse(findPos(b, pos))
+      case Iterate(n, z, s) =>
+        findPos(n, pos).orElse(findPos(z, pos)).orElse(findPos(s, pos))
+
+  private def posMatches(p1: PosInfo, size: Int, p2: Position): Boolean =
+    p1._1 == p2.getLine() + 1 && p2.getCharacter() + 1 >= p1._2 && p2
+      .getCharacter() + 1 < p1._2 + size

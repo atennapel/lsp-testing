@@ -20,6 +20,7 @@ class LangLanguageServer extends LanguageServer with LanguageClientAware:
   ): CompletableFuture[InitializeResult] =
     val response = new InitializeResult(new ServerCapabilities)
     response.getCapabilities.setTextDocumentSync(TextDocumentSyncKind.Full)
+    response.getCapabilities().setHoverProvider(true)
     clientCapabilities = Some(params.getCapabilities)
     if !isDynamicCompletionRegistration then
       response.getCapabilities.setCompletionProvider(new CompletionOptions)
