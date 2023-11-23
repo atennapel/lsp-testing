@@ -9,6 +9,9 @@ object Elaborate:
     def bind(x: Name, ty: Ty) = Ctx(pos, env + (x -> ty))
     def lookup(x: Name): Option[Ty] = env.get(x)
 
+  private inline def span(name: Name)(implicit ctx: Ctx): Span =
+    (ctx.pos, (ctx.pos._1, ctx.pos._2 + name.size - 1))
+
   class ElaborateError(val ctx: Ctx, msg: String) extends Exception(msg):
     override def toString: String = s"ElaborateError(${ctx.pos}): $msg"
 
@@ -35,78 +38,80 @@ object Elaborate:
 
   private def check(tm: S.Tm, ty: Ty)(implicit ctx: Ctx): Tm = (tm, ty) match
     case (S.Pos(pos, tm), _) => check(tm, ty)(ctx.enter(pos))
-    case (S.Hole(_), _)      => err(s"hole with type $ty")
-    case (S.Lam(x, None, b), TFun(pty, rty)) =>
+    case (S.Hole(_), _)      => err(s"hole with type ${ty.pretty}")
+    case (S.Lam(x, xpos, None, b), TFun(pty, rty)) =>
       val eb = check(b, rty)(ctx.bind(x, pty))
-      Lam(x, pty, eb)
-    case (S.Let(x, t, v, b), _) =>
+      Lam(x, span(x)(ctx.enter(xpos)), pty, eb)
+    case (S.Let(x, xpos, t, v, b), _) =>
       val (ev, vt) = checkOrInfer(v, t)
       val eb = check(b, ty)(ctx.bind(x, vt))
-      Let(x, vt, ev, eb)
+      Let(x, span(x)(ctx.enter(xpos)), vt, ev, eb)
     case (S.If(c, a, b), _) =>
       val ec = check(c, TBool)
       val ea = check(a, ty)
       val eb = check(b, ty)
-      If(ec, ea, eb)
+      If(span("if"), ty, ec, ea, eb)
     case (S.Iterate(n, z, s), _) =>
       val en = check(n, TNat)
       val ez = check(z, ty)
       val es = check(s, TFun(TNat, TFun(ty, ty)))
-      Iterate(en, ez, es)
+      Iterate(span("iterate"), ty, en, ez, es)
     case _ =>
       val (etm, ety) = infer(tm)
-      if ety != ty then err(s"type mismatch, expected $ty but got $ety")
+      if ety != ty then
+        err(s"type mismatch, expected ${ty.pretty} but got ${ety.pretty}")
       etm
 
   private def infer(tm: S.Tm)(implicit ctx: Ctx): (Tm, Ty) = tm match
     case S.Pos(pos, tm) => infer(tm)(ctx.enter(pos))
-    case S.NatLit(v)    => (NatLit(v), TNat)
-    case S.BoolLit(b)   => (BoolLit(b), TBool)
-    case S.Succ         => (Succ, TFun(TNat, TNat))
+    case S.NatLit(v)    => (NatLit(v, span(v.toString)), TNat)
+    case S.BoolLit(b)   => (BoolLit(b, span(b.toString)), TBool)
+    case S.Succ         => (Succ(span("S")), TFun(TNat, TNat))
     case S.Hole(_)      => err(s"cannot infer hole")
-    case S.Var(x) =>
+    case S.Var(x, xpos) =>
       ctx.lookup(x) match
-        case Some(ty) => (Var(x, ty, ctx.pos), ty)
+        case Some(ty) => (Var(x, ty, span(x)(ctx.enter(xpos))), ty)
         case None =>
           globals.get(x) match
-            case Some(ty) => (Global(x, ty, ctx.pos), ty)
+            case Some(ty) => (Global(x, ty, span(x)(ctx.enter(xpos))), ty)
             case None     => err(s"undefined variable $x")
-    case S.Lam(x, ty, b) =>
+    case S.Lam(x, xpos, ty, b) =>
       ty match
         case None => err(s"cannot infer unannotated lambda")
         case Some(ty) =>
           val pty = checkTy(ty)
           val (ebody, rty) = infer(b)(ctx.bind(x, pty))
-          (Lam(x, pty, ebody), TFun(pty, rty))
+          (Lam(x, span(x)(ctx.enter(xpos)), pty, ebody), TFun(pty, rty))
     case S.App(f, a) =>
       val (ef, fty) = infer(f)
       fty match
         case TFun(pty, rty) =>
           val ea = check(a, pty)
           (App(ef, ea), rty)
-        case _ => err(s"function type expected in application but got $fty")
-    case S.Let(x, t, v, b) =>
+        case _ =>
+          err(s"function type expected in application but got ${fty.pretty}")
+    case S.Let(x, xpos, t, v, b) =>
       val (ev, vt) = checkOrInfer(v, t)
       val (eb, rt) = infer(b)(ctx.bind(x, vt))
-      (Let(x, vt, ev, eb), rt)
+      (Let(x, span(x)(ctx.enter(xpos)), vt, ev, eb), rt)
     case S.If(c, a, b) =>
       val ec = check(c, TBool)
       val (ea, rty) = infer(a)
       val eb = check(b, rty)
-      (If(ec, ea, eb), rty)
+      (If(span("if"), rty, ec, ea, eb), rty)
     case S.Iterate(n, z, s) =>
       val en = check(n, TNat)
       val (ez, rty) = infer(z)
       val es = check(s, TFun(TNat, TFun(rty, rty)))
-      (Iterate(en, ez, es), rty)
+      (Iterate(span("iterate"), rty, en, ez, es), rty)
 
   private def elaborate(d: S.Def): Def = d match
-    case S.Def(pos, x, ty, v) =>
+    case S.Def(pos, x, xpos, ty, v) =>
       implicit val ctx: Ctx = Ctx(d.pos, Map.empty)
       if globals.get(x).isDefined then err(s"duplicate definition $x")
       val (etm, ety) = checkOrInfer(v, ty)
       globals += (x -> ety)
-      Def(pos, x, ety, etm)
+      Def(x, span(x)(ctx.enter(xpos)), ety, etm)
 
   def elaborate(d: List[S.Def]): List[Def] =
     globals.clear()

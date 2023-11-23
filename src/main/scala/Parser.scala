@@ -80,8 +80,14 @@ object Parser:
     private lazy val ident: Parsley[Name] = ident0
     private lazy val userOp: Parsley[Name] = userOp0
     private lazy val identOrOp: Parsley[Name] = ("(" *> userOp <* ")") <|> ident
+    private lazy val identOrOpWithPos: Parsley[(Name, PosInfo)] =
+      (("(" *> (pos <~> userOp) <* ")") <|> (pos <~> ident)).map((p, x) =>
+        (x, p)
+      )
 
     private lazy val bind: Parsley[Name] = "_".map(_ => "_") <|> identOrOp
+    private lazy val bindWithPos: Parsley[(Name, PosInfo)] =
+      (pos <~> bind).map((p, x) => (x, p))
 
     private lazy val holeP: Parsley[Tm] =
       ident.flatMap(x0 => {
@@ -92,14 +98,14 @@ object Parser:
       })
 
     private lazy val atom: Parsley[Tm] = positioned(
-      attempt("(" *> userOp.map(x => Var(x)) <* ")")
+      attempt("(" *> (pos <~> userOp).map((p, x) => Var(x, p)) <* ")")
         <|> ("(" *> tm <* ")")
         <|> attempt(holeP)
         <|> natural.map(NatLit.apply)
         <|> ("True" #> BoolLit(true))
         <|> ("False" #> BoolLit(false))
         <|> ("S" #> Succ)
-        <|> ident.map(x => Var(x))
+        <|> (pos <~> ident).map((pos, x) => Var(x, pos))
     )
 
     private val hole = Hole(None)
@@ -119,23 +125,24 @@ object Parser:
         )
       )
 
-    private type DefParam = (List[Name], Option[Ty])
+    private type DefParam = (List[(Name, PosInfo)], Option[Ty])
     private lazy val defParam: Parsley[DefParam] =
-      ("(" *> some(bind) <~> ":" *> ty <* ")")
+      ("(" *> some(bindWithPos) <~> ":" *> ty <* ")")
         .map { case (xs, ty) =>
           (xs, Some(ty))
-        } <|> bind.map(x => (List(x), None))
+        } <|> bindWithPos.map(e => (List(e), None))
 
     private lazy val let: Parsley[Tm] =
       positioned(
-        ("let" *> identOrOp <~> many(
+        ("let" *> identOrOpWithPos <~> many(
           defParam
         ) <~> option(
           ":" *> ty
         ) <~> "=" *> tm <~> ";" *> tm)
-          .map { case ((((x, ps), ty), v), b) =>
+          .map { case (((((x, xpos), ps), ty), v), b) =>
             Let(
               x,
+              xpos,
               ty.map(typeFromParams(ps, _)),
               lamFromDefParams(ps, v, ty.isEmpty),
               b
@@ -163,8 +170,8 @@ object Parser:
     private lazy val app: Parsley[Tm] =
       precedence[Tm](appAtom <|> lam)(
         defaultOps(
-          (op, t) => App(Var(op), t),
-          (op, l, r) => App(App(Var(op), l), r)
+          (pos, op, t) => App(Var(op, pos), t),
+          (pos, op, l, r) => App(App(Var(op, pos), l), r)
         )*
       )
 
@@ -192,18 +199,19 @@ object Parser:
         useTypes: Boolean
     ): Tm =
       ps.foldRight(b) { case ((xs, ty), b) =>
-        xs.foldRight(b)(
+        xs.foldRight(b) { case ((x, pos), b) =>
           Lam(
-            _,
+            x,
+            pos,
             if useTypes then Some(ty.getOrElse(THole)) else None,
-            _
+            b
           )
-        )
+        }
       }
 
     private def lamFromLamParams(ps: List[DefParam], b: Tm): Tm =
       ps.foldRight(b) { case ((xs, ty), b) =>
-        xs.foldRight(b)(Lam(_, ty, _))
+        xs.foldRight(b) { case ((x, p), b) => Lam(x, p, ty, b) }
       }
 
     // operators
@@ -212,28 +220,30 @@ object Parser:
 
     private def opL[T](
         o: String,
-        handle: (Name, T, T) => T
+        handle: (PosInfo, Name, T, T) => T
     ): Parsley[InfixL.Op[T]] =
-      attempt(userOpStart(o).filterNot(_.endsWith(":"))).map(op =>
-        (l, r) => handle(op, l, r)
+      attempt(pos <~> userOpStart(o).filterNot(_.endsWith(":"))).map((p, op) =>
+        (l, r) => handle(p, op, l, r)
       )
 
     private def opR[T](
         o: String,
-        handle: (Name, T, T) => T
+        handle: (PosInfo, Name, T, T) => T
     ): Parsley[InfixR.Op[T]] =
-      attempt(userOpStart(o)).map(op => (l, r) => handle(op, l, r))
+      attempt(pos <~> userOpStart(o)).map((p, op) =>
+        (l, r) => handle(p, op, l, r)
+      )
 
     private def opP[T](
         o: String,
-        handle: (Name, T) => T
+        handle: (PosInfo, Name, T) => T
     ): Parsley[Prefix.Op[T]] =
-      attempt(userOpStart(o)).map(op => t => handle(op, t))
+      attempt(pos <~> userOpStart(o)).map((p, op) => t => handle(p, op, t))
 
     private def opLevel[T](
         s: String,
-        prefix: (Name, T) => T,
-        infix: (Name, T, T) => T
+        prefix: (PosInfo, Name, T) => T,
+        infix: (PosInfo, Name, T, T) => T
     ): List[Ops[T, T]] =
       val chars = s.toList
       List(
@@ -242,13 +252,16 @@ object Parser:
         Ops(InfixR)(chars.map(c => opR(c.toString, infix))*)
       )
 
-    private def ops[T](prefix: (Name, T) => T, infix: (Name, T, T) => T)(
+    private def ops[T](
+        prefix: (PosInfo, Name, T) => T,
+        infix: (PosInfo, Name, T, T) => T
+    )(
         ss: String*
     ): List[Ops[T, T]] = ss.flatMap(s => opLevel(s, prefix, infix)).toList
 
     private def defaultOps[T](
-        prefix: (Name, T) => T,
-        infix: (Name, T, T) => T
+        prefix: (PosInfo, Name, T) => T,
+        infix: (PosInfo, Name, T, T) => T
     ): List[Ops[T, T]] =
       ops(prefix, infix)(
         "`@#?,.",
@@ -268,15 +281,16 @@ object Parser:
     lazy val defs: Parsley[List[Def]] = many(defP)
 
     private lazy val defP: Parsley[Def] =
-      (pos <~> "def" *> identOrOp <~> many(
+      (pos <~> "def" *> identOrOpWithPos <~> many(
         defParam
       ) <~> option(
         ":" *> ty
       ) <~> "=" *> tm)
-        .map { case ((((pos, x), ps), ty), v) =>
+        .map { case ((((pos, (x, xpos)), ps), ty), v) =>
           Def(
             pos,
             x,
+            xpos,
             ty.map(typeFromParams(ps, _)),
             lamFromDefParams(ps, v, ty.isEmpty)
           )

@@ -115,42 +115,16 @@ class LangTextDocumentService(langServer: LangLanguageServer)
       info.defs match
         case None => null
         case Some(defs) =>
-          findPos(defs, params.getPosition()) match
+          val p = pos(params.getPosition)
+          defs.map(_.typeAt(p)).find(_.isDefined) match
             case None => null
             case Some(ty) =>
               val h = new Hover
               h.setContents(
-                new MarkupContent(MarkupKind.PLAINTEXT, ty.toString)
+                new MarkupContent(MarkupKind.PLAINTEXT, ty.get.pretty)
               )
               h
     }
 
-  private def findPos(defs: List[Def], pos: Position): Option[Ty] =
-    val i = defs.takeWhile { d => d.pos._1 < (pos.getLine() + 1) }.size
-    val d = defs.drop(i).head
-    findPos(d, pos: Position)
-
-  private def findPos(d: Def, pos: Position): Option[Ty] =
-    findPos(d.value, pos)
-
-  private def findPos(t: Tm, pos: Position): Option[Ty] =
-    t match
-      case Var(x, ty, p) =>
-        if posMatches(p, x.size, pos) then Some(ty) else None
-      case Global(x, ty, p) =>
-        if posMatches(p, x.size, pos) then Some(ty) else None
-      case NatLit(value)       => None
-      case BoolLit(value)      => None
-      case Succ                => None
-      case Lam(name, ty, body) => findPos(body, pos)
-      case App(fn, arg)        => findPos(fn, pos).orElse(findPos(arg, pos))
-      case Let(name, ty, value, body) =>
-        findPos(value, pos).orElse(findPos(body, pos))
-      case If(c, a, b) =>
-        findPos(c, pos).orElse(findPos(a, pos)).orElse(findPos(b, pos))
-      case Iterate(n, z, s) =>
-        findPos(n, pos).orElse(findPos(z, pos)).orElse(findPos(s, pos))
-
-  private def posMatches(p1: PosInfo, size: Int, p2: Position): Boolean =
-    p1._1 == p2.getLine() + 1 && p2.getCharacter() + 1 >= p1._2 && p2
-      .getCharacter() + 1 < p1._2 + size
+  inline private def pos(pos: Position): PosInfo =
+    (pos.getLine() + 1, pos.getCharacter() + 1)
