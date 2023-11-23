@@ -14,6 +14,9 @@ import Elaborate.elaborate
 import scala.util.Success
 import scala.util.Failure
 import Elaborate.ElaborateError
+import java.{util => ju}
+import java.{util => ju}
+import scala.annotation.tailrec
 
 class LangTextDocumentService(langServer: LangLanguageServer)
     extends TextDocumentService:
@@ -116,15 +119,70 @@ class LangTextDocumentService(langServer: LangLanguageServer)
         case None => null
         case Some(defs) =>
           val p = pos(params.getPosition)
-          defs.map(_.typeAt(p)).find(_.isDefined) match
+          firstMatch(defs, _.typeAt(p)) match
             case None => null
             case Some(ty) =>
               val h = new Hover
               h.setContents(
-                new MarkupContent(MarkupKind.PLAINTEXT, ty.get.pretty)
+                new MarkupContent(MarkupKind.PLAINTEXT, ty.pretty)
               )
               h
     }
 
   inline private def pos(pos: Position): PosInfo =
     (pos.getLine() + 1, pos.getCharacter() + 1)
+  def spanToRange(span: Span) =
+    new Range(
+      new Position(span._1._1 - 1, span._1._2 - 1),
+      new Position(span._2._1 - 1, span._2._2 - 1)
+    )
+
+  override def definition(params: DefinitionParams): CompletableFuture[
+    Either[ju.List[? <: Location], ju.List[? <: LocationLink]]
+  ] =
+    CompletableFuture.supplyAsync { () =>
+      val uri = params.getTextDocument().getUri()
+      logger.log(s"definition $uri")
+      val info = docMap(uri)
+      info.defs match
+        case None => null
+        case Some(defs) =>
+          val p = pos(params.getPosition())
+          defs.indexWhere(d => d.matchPos(p)) match
+            case -1 =>
+              val m = mutable.Map.empty[Name, Span]
+              firstMatch(
+                defs,
+                d => {
+                  val res = d.spanOf(p)(m.toMap)
+                  m += (d.name -> d.span)
+                  res
+                }
+              ) match
+                case None => null
+                case Some(spans) =>
+                  Either.forLeft(
+                    spans
+                      .map(span => new Location(uri, spanToRange(span)))
+                      .asJava
+                  )
+            case i =>
+              val x = defs(i).name
+              defs.drop(i + 1).flatMap(_.findGlobal(x)) match
+                case Nil => null
+                case spans =>
+                  Either.forLeft(
+                    spans
+                      .map(span => new Location(uri, spanToRange(span)))
+                      .asJava
+                  )
+    }
+
+  @tailrec
+  private def firstMatch[A, B](l: List[A], f: A => Option[B]): Option[B] =
+    l match
+      case Nil => None
+      case hd :: tl =>
+        f(hd) match
+          case None => firstMatch(tl, f)
+          case res  => res

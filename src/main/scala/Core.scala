@@ -45,6 +45,15 @@ object Core:
     def typeAt(pos: PosInfo): Option[Ty] =
       posInSpanTy(pos, span, ty).orElse(value.typeAt(pos))
 
+    def spanOf(pos: PosInfo)(implicit
+        env: Map[Name, Span]
+    ): Option[List[Span]] =
+      value.spanOf(pos)(env + (name -> span))
+
+    def matchPos(pos: PosInfo): Boolean = posInSpan(pos, span)
+
+    def findGlobal(x: Name): List[Span] = value.findGlobal(x)
+
   enum Tm:
     case Var(name: Name, ty: Ty, span: Span)
     case Global(name: Name, ty: Ty, span: Span)
@@ -90,4 +99,59 @@ object Core:
           .orElse(n.typeAt(pos))
           .orElse(z.typeAt(pos))
           .orElse(s.typeAt(pos))
+
+    def spanOf(pos: PosInfo)(implicit
+        env: Map[Name, Span]
+    ): Option[List[Span]] =
+      inline def go(x: Name, span: Span) =
+        if posInSpan(pos, span) then env.get(x).map(List(_)) else None
+      inline def to(l: List[Span]): Option[List[Span]] = l match
+        case Nil => None
+        case l   => Some(l)
+      this match
+        case Var(x, ty, span)    => go(x, span)
+        case Global(x, ty, span) => go(x, span)
+        case NatLit(v, span)     => None
+        case BoolLit(v, span)    => None
+        case Succ(span)          => None
+        case App(fn, arg)        => fn.spanOf(pos).orElse(arg.spanOf(pos))
+        case If(span, rty, c, t, f) =>
+          c.spanOf(pos).orElse(t.spanOf(pos)).orElse(f.spanOf(pos))
+        case Iterate(span, rty, n, z, s) =>
+          n.spanOf(pos).orElse(z.spanOf(pos)).orElse(s.spanOf(pos))
+        case Lam(x, span, ty, b) =>
+          if posInSpan(pos, span) then to(b.findVar(x))
+          else b.spanOf(pos)(env + (x -> span))
+        case Let(x, span, ty, v, b) =>
+          if posInSpan(pos, span) then to(b.findVar(x))
+          else v.spanOf(pos).orElse(b.spanOf(pos)(env + (x -> span)))
+
+    def findVar(x: Name): List[Span] = this match
+      case Var(y, _, span)    => if x == y then List(span) else Nil
+      case Global(y, _, span) => Nil
+      case NatLit(_, span)    => Nil
+      case BoolLit(_, span)   => Nil
+      case Succ(_)            => Nil
+      case Lam(y, _, _, b)    => if x == y then Nil else b.findVar(x)
+      case App(fn, arg)       => fn.findVar(x) ++ arg.findVar(x)
+      case Let(y, _, _, v, b) =>
+        v.findVar(x) ++ (if x == y then Nil else b.findVar(x))
+      case If(_, _, c, t, f) => c.findVar(x) ++ t.findVar(x) ++ f.findVar(x)
+      case Iterate(_, _, n, z, s) =>
+        n.findVar(x) ++ z.findVar(x) ++ s.findVar(x)
+
+    def findGlobal(x: Name): List[Span] = this match
+      case Var(y, _, span)    => Nil
+      case Global(y, _, span) => if x == y then List(span) else Nil
+      case NatLit(_, span)    => Nil
+      case BoolLit(_, span)   => Nil
+      case Succ(_)            => Nil
+      case Lam(y, _, _, b)    => if x == y then Nil else b.findGlobal(x)
+      case App(fn, arg)       => fn.findGlobal(x) ++ arg.findGlobal(x)
+      case Let(y, _, _, v, b) =>
+        v.findGlobal(x) ++ (if x == y then Nil else b.findGlobal(x))
+      case If(_, _, c, t, f) =>
+        c.findGlobal(x) ++ t.findGlobal(x) ++ f.findGlobal(x)
+      case Iterate(_, _, n, z, s) =>
+        n.findGlobal(x) ++ z.findGlobal(x) ++ s.findGlobal(x)
   export Tm.*

@@ -8,6 +8,6 @@ TODO:
 - [x] Add booleans and if-then-else
 - [x] Add Nat iteration
 - [x] Add hover support
-- [ ] Add ctrl-click for go-to definition/use
+- [x] Add ctrl-click for go-to definition/use
 - [ ] Add syntax highlighting
 - [ ] Add modules
