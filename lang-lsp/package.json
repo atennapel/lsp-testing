@@ -26,6 +26,13 @@
         ]
       }
     ],
+    "grammars": [
+      {
+        "language": "lang",
+        "scopeName": "source",
+        "path": "./syntaxes/lang.tmGrammar.json"
+      }
+    ],
     "configuration": {
       "type": "object",
       "title": "LangServer",

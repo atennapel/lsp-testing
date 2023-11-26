@@ -1,0 +1,54 @@
+{
+  "scopeName": "source",
+  "patterns": [
+    {
+      "include": "#expression"
+    }
+  ],
+  "repository": {
+    "expression": {
+      "patterns": [
+        {
+          "include": "#keyword"
+        },
+        {
+          "include": "#operator"
+        },
+        {
+          "include": "#number"
+        },
+        {
+          "include": "#paren-expression"
+        }
+      ]
+    },
+    "keyword": {
+      "match": "def|iterate|if|then|else",
+      "name": "keyword.name"
+    },
+    "number": {
+      "match": "[0-9]+",
+      "name": "constant.numeric"
+    },
+    "paren-expression": {
+      "begin": "\\(",
+      "end": "\\)",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.paren.open"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.paren.close"
+        }
+      },
+      "name": "expression.group",
+      "patterns": [
+        {
+          "include": "#expression"
+        }
+      ]
+    }
+  }
+}

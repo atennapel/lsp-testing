@@ -9,5 +9,5 @@ TODO:
 - [x] Add Nat iteration
 - [x] Add hover support
 - [x] Add ctrl-click for go-to definition/use
-- [ ] Add syntax highlighting
+- [x] Add syntax highlighting
 - [ ] Add modules
