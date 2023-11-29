@@ -11,3 +11,6 @@ TODO:
 - [x] Add ctrl-click for go-to definition/use
 - [x] Add syntax highlighting
 - [ ] Add modules
+  - [x] Basic setup
+  - [ ] Re-check dependent files
+  - [ ] Find defs/uses in other files

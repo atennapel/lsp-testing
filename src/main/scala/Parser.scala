@@ -19,6 +19,7 @@ object Parser:
       nestedComments = true,
       keywords = Set(
         "def",
+        "import",
         "let",
         "Nat",
         "Bool",
@@ -278,7 +279,10 @@ object Parser:
       )
 
     // definitions
-    lazy val defs: Parsley[List[Def]] = many(defP)
+    lazy val defs: Parsley[List[Def]] = many(importP <|> defP)
+
+    private lazy val importP: Parsley[Def] =
+      (pos <~> "import" *> string).map(DImport.apply)
 
     private lazy val defP: Parsley[Def] =
       (pos <~> "def" *> identOrOpWithPos <~> many(
@@ -287,7 +291,7 @@ object Parser:
         ":" *> ty
       ) <~> "=" *> tm)
         .map { case ((((pos, (x, xpos)), ps), ty), v) =>
-          Def(
+          DDef(
             pos,
             x,
             xpos,

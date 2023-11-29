@@ -17,16 +17,27 @@ object Surface:
       case TPos(_, t)     => t.toString
   export Ty.*
 
-  final case class Def(
-      pos: PosInfo,
-      name: Name,
-      namepos: PosInfo,
-      ty: Option[Ty],
-      value: Tm
-  ):
-    override def toString: String = ty match
-      case Some(t) => s"def $name : $t = $value"
-      case None    => s"def $name = $value"
+  enum Def:
+    case DDef(
+        pos: PosInfo,
+        name: Name,
+        namepos: PosInfo,
+        ty: Option[Ty],
+        value: Tm
+    )
+    case DImport(pos: PosInfo, uri: String)
+
+    override def toString: String = this match
+      case DDef(_, name, _, ty, value) =>
+        ty match
+          case Some(t) => s"def $name : $t = $value"
+          case None    => s"def $name = $value"
+      case DImport(_, uri) => s"import \"$uri\""
+
+    def imports: Option[DImport] = this match
+      case x @ DImport(pos, uri) => Some(x)
+      case _                     => None
+  export Def.*
 
   enum Tm:
     case Var(name: Name, pos: PosInfo)

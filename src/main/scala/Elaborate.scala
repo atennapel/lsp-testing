@@ -15,7 +15,7 @@ object Elaborate:
   class ElaborateError(val ctx: Ctx, msg: String) extends Exception(msg):
     override def toString: String = s"ElaborateError(${ctx.pos}): $msg"
 
-  private val globals: mutable.Map[String, Ty] = mutable.Map.empty
+  val globals: mutable.Map[String, Ty] = mutable.Map.empty
 
   private def err(msg: String)(implicit ctx: Ctx) =
     throw ElaborateError(ctx, msg)
@@ -105,14 +105,14 @@ object Elaborate:
       val es = check(s, TFun(TNat, TFun(rty, rty)))
       (Iterate(span("iterate"), rty, en, ez, es), rty)
 
-  private def elaborate(d: S.Def): Def = d match
-    case S.Def(pos, x, xpos, ty, v) =>
-      implicit val ctx: Ctx = Ctx(d.pos, Map.empty)
+  private def elaborate(d: S.Def): Option[Def] = d match
+    case S.DImport(pos, uri) => None
+    case S.DDef(pos, x, xpos, ty, v) =>
+      implicit val ctx: Ctx = Ctx(pos, Map.empty)
       if globals.get(x).isDefined then err(s"duplicate definition $x")
       val (etm, ety) = checkOrInfer(v, ty)
       globals += (x -> ety)
-      Def(x, span(x)(ctx.enter(xpos)), ety, etm)
+      Some(Def(x, span(x)(ctx.enter(xpos)), ety, etm))
 
   def elaborate(d: List[S.Def]): List[Def] =
-    globals.clear()
-    d.map(elaborate)
+    d.flatMap(elaborate)

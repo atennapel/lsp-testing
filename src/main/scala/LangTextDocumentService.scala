@@ -17,6 +17,7 @@ import Elaborate.ElaborateError
 import java.{util => ju}
 import java.{util => ju}
 import scala.annotation.tailrec
+import ModuleLoading.UriError
 
 class LangTextDocumentService(langServer: LangLanguageServer)
     extends TextDocumentService:
@@ -26,9 +27,6 @@ class LangTextDocumentService(langServer: LangLanguageServer)
 
   private val docMap: mutable.Map[String, DocInfo] = mutable.Map.empty
 
-  private def parseAndElaborate(txt: String): Try[List[Def]] =
-    defsParser.parse(txt).toTry.flatMap(ds => Try(elaborate(ds)))
-
   private def getPosFromParseError(msg: String): (Int, Int) =
     val dropped = msg.drop(13).takeWhile(_ != ')')
     val line = dropped.drop(5).takeWhile(_ != ',').trim
@@ -36,7 +34,8 @@ class LangTextDocumentService(langServer: LangLanguageServer)
     (line.toInt - 1, col.toInt - 1)
 
   private def handleFile(uri: String, txt: String): Option[List[Def]] =
-    parseAndElaborate(txt) match
+    ModuleLoading.invalidate(uri)
+    Try(ModuleLoading.load(uri, Some(txt))) match
       case Success(defs) =>
         logger.log(s"typecheck success: $defs")
         val diags = new PublishDiagnosticsParams(uri, List().asJava)
@@ -55,6 +54,15 @@ class LangTextDocumentService(langServer: LangLanguageServer)
           case err: ElaborateError =>
             logger.log(err.toString)
             val pos = new Position(err.ctx.pos._1 - 1, err.ctx.pos._2 - 1)
+            val range = new Range(pos, pos)
+            val diag = new Diagnostic(range, err.getMessage)
+            val diags = new PublishDiagnosticsParams(uri, List(diag).asJava)
+            langServer.getClient.publishDiagnostics(diags)
+            None
+          case err: UriError =>
+            val pos = err.pos match
+              case Some((line, col)) => new Position(line - 1, col - 1)
+              case None              => new Position(0, 0)
             val range = new Range(pos, pos)
             val diag = new Diagnostic(range, err.getMessage)
             val diags = new PublishDiagnosticsParams(uri, List(diag).asJava)
