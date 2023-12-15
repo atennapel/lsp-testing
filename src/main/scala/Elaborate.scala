@@ -1,21 +1,22 @@
 import Surface as S
 import Core.*
+import ElabState as ES
 
-import scala.collection.mutable
+import java.nio.file.Path
 
 object Elaborate:
-  final case class Ctx(pos: S.PosInfo, env: Map[Name, Ty]):
-    def enter(pos: S.PosInfo) = Ctx(pos, env)
-    def bind(x: Name, ty: Ty) = Ctx(pos, env + (x -> ty))
+  final case class Ctx(uri: String, pos: S.PosInfo, env: Map[Name, Ty]):
+    def enter(pos: S.PosInfo) = Ctx(uri, pos, env)
+    def bind(x: Name, ty: Ty) = Ctx(uri, pos, env + (x -> ty))
     def lookup(x: Name): Option[Ty] = env.get(x)
 
   private inline def span(name: Name)(implicit ctx: Ctx): Span =
     (ctx.pos, (ctx.pos._1, ctx.pos._2 + name.size - 1))
 
   class ElaborateError(val ctx: Ctx, msg: String) extends Exception(msg):
-    override def toString: String = s"ElaborateError(${ctx.pos}): $msg"
-
-  val globals: mutable.Map[String, Ty] = mutable.Map.empty
+    def uri = ctx.uri
+    def pos = ctx.pos
+    override def toString: String = s"ElaborateError($uri, $pos): $msg"
 
   private def err(msg: String)(implicit ctx: Ctx) =
     throw ElaborateError(ctx, msg)
@@ -64,15 +65,17 @@ object Elaborate:
 
   private def infer(tm: S.Tm)(implicit ctx: Ctx): (Tm, Ty) = tm match
     case S.Pos(pos, tm) => infer(tm)(ctx.enter(pos))
-    case S.NatLit(v)    => (NatLit(v, span(v.toString)), TNat)
-    case S.BoolLit(b)   => (BoolLit(b, span(b.toString)), TBool)
-    case S.Succ         => (Succ(span("S")), TFun(TNat, TNat))
-    case S.Hole(_)      => err(s"cannot infer hole")
+    case S.NatLit(v) =>
+      if v < 0 then err(s"negative numbers are not supported")
+      else (NatLit(v, span(v.toString)), TNat)
+    case S.BoolLit(b) => (BoolLit(b, span(b.toString)), TBool)
+    case S.Succ       => (Succ(span("S")), TFun(TNat, TNat))
+    case S.Hole(_)    => err(s"cannot infer hole")
     case S.Var(x, xpos) =>
       ctx.lookup(x) match
         case Some(ty) => (Var(x, ty, span(x)(ctx.enter(xpos))), ty)
         case None =>
-          globals.get(x) match
+          ES.lookup(x) match
             case Some(ty) => (Global(x, ty, span(x)(ctx.enter(xpos))), ty)
             case None     => err(s"undefined variable $x")
     case S.Lam(x, xpos, ty, b) =>
@@ -105,14 +108,14 @@ object Elaborate:
       val es = check(s, TFun(TNat, TFun(rty, rty)))
       (Iterate(span("iterate"), rty, en, ez, es), rty)
 
-  private def elaborate(d: S.Def): Option[Def] = d match
-    case S.DImport(pos, uri) => None
+  private def elaborate(uri: String, d: S.Def): Unit = d match
+    case S.DImport(pos, uri) =>
     case S.DDef(pos, x, xpos, ty, v) =>
-      implicit val ctx: Ctx = Ctx(pos, Map.empty)
-      if globals.get(x).isDefined then err(s"duplicate definition $x")
+      implicit val ctx: Ctx = Ctx(uri, pos, Map.empty)
+      if ES.exists(x) then err(s"duplicate definition $x")
       val (etm, ety) = checkOrInfer(v, ty)
-      globals += (x -> ety)
-      Some(Def(x, span(x)(ctx.enter(xpos)), ety, etm))
+      val d = Def(x, span(x)(ctx.enter(xpos)), ety, etm)
+      ES.addDef(uri, d)
 
-  def elaborate(d: List[S.Def]): List[Def] =
-    d.flatMap(elaborate)
+  def elaborate(uri: String, d: List[S.Def]): Unit =
+    d.foreach(elaborate(uri, _))

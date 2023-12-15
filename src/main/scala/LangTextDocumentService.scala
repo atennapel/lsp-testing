@@ -4,18 +4,16 @@ import org.eclipse.lsp4j.jsonrpc.messages.Either
 import org.eclipse.lsp4j.services.TextDocumentService
 import java.util
 import java.util.concurrent.CompletableFuture
+import java.{util => ju}
 import scala.jdk.CollectionConverters.*
 import scala.util.Try
 import scala.collection.mutable
 
 import Parser.defsParser
 import Core.*
-import Elaborate.elaborate
 import scala.util.Success
 import scala.util.Failure
 import Elaborate.ElaborateError
-import java.{util => ju}
-import java.{util => ju}
 import scala.annotation.tailrec
 import ModuleLoading.UriError
 
@@ -25,22 +23,30 @@ class LangTextDocumentService(langServer: LangLanguageServer)
 
   private final case class DocInfo(text: String, defs: Option[List[Def]])
 
-  private val docMap: mutable.Map[String, DocInfo] = mutable.Map.empty
-
   private def getPosFromParseError(msg: String): (Int, Int) =
     val dropped = msg.drop(13).takeWhile(_ != ')')
     val line = dropped.drop(5).takeWhile(_ != ',').trim
     val col = dropped.dropWhile(_ != ',').drop(9).trim
     (line.toInt - 1, col.toInt - 1)
 
-  private def handleFile(uri: String, txt: String): Option[List[Def]] =
-    ModuleLoading.invalidate(uri)
-    Try(ModuleLoading.load(uri, Some(txt))) match
+  private def denormalizeURI(uri: String): String =
+    val res = "file:/" + uri.drop(5).replace(":", "%3A").replace("\\", "/")
+    logger.log(s"denormalize uri: $uri -> $res")
+    res
+
+  private def handleFile(uri: String, txt: Option[String]): Unit =
+    logger.log(s"handleFile: $uri")
+    val loaded = mutable.Set.empty[String]
+    Try(ModuleLoading.load(uri, txt)(loaded)) match
       case Success(defs) =>
-        logger.log(s"typecheck success: $defs")
-        val diags = new PublishDiagnosticsParams(uri, List().asJava)
-        langServer.getClient.publishDiagnostics(diags)
-        Some(defs)
+        logger.log(
+          s"typecheck success: $defs, ${loaded.mkString("[", ",", "]")}"
+        )
+        loaded.foreach { uri =>
+          val diags =
+            new PublishDiagnosticsParams(denormalizeURI(uri), List().asJava)
+          langServer.getClient.publishDiagnostics(diags)
+        }
       case Failure(exc) =>
         exc match
           case err: Exception if err.getMessage.startsWith("ParseError:") =>
@@ -56,7 +62,10 @@ class LangTextDocumentService(langServer: LangLanguageServer)
             val pos = new Position(err.ctx.pos._1 - 1, err.ctx.pos._2 - 1)
             val range = new Range(pos, pos)
             val diag = new Diagnostic(range, err.getMessage)
-            val diags = new PublishDiagnosticsParams(uri, List(diag).asJava)
+            val diags = new PublishDiagnosticsParams(
+              denormalizeURI(err.uri),
+              List(diag).asJava
+            )
             langServer.getClient.publishDiagnostics(diags)
             None
           case err: UriError =>
@@ -68,14 +77,20 @@ class LangTextDocumentService(langServer: LangLanguageServer)
             val diags = new PublishDiagnosticsParams(uri, List(diag).asJava)
             langServer.getClient.publishDiagnostics(diags)
             None
+          case err: Exception if err.getMessage.startsWith("cycle") =>
+            val pos = new Position(0, 0)
+            val range = new Range(pos, pos)
+            val diag = new Diagnostic(range, err.getMessage)
+            val diags = new PublishDiagnosticsParams(uri, List(diag).asJava)
+            langServer.getClient.publishDiagnostics(diags)
+            None
           case _ => throw exc
 
   override def didOpen(params: DidOpenTextDocumentParams): Unit =
     val uri = params.getTextDocument.getUri
     val text = params.getTextDocument().getText()
     logger.log(s"didOpen $uri")
-    val defs = handleFile(uri, text)
-    docMap(uri) = DocInfo(text, defs)
+    handleFile(uri, Some(text))
 
   private def getIx(s: String, line: Int, col: Int): Int =
     s.linesIterator.toList(line)(col)
@@ -94,12 +109,10 @@ class LangTextDocumentService(langServer: LangLanguageServer)
     }
      */
     val newTxt = params.getContentChanges().get(0).getText()
-    val defs = handleFile(uri, newTxt)
-    docMap(uri) = DocInfo(newTxt, defs)
+    handleFile(uri, Some(newTxt))
 
   override def didClose(params: DidCloseTextDocumentParams): Unit =
     logger.log(s"didClose ${params.getTextDocument.getUri}")
-    docMap.remove(params.getTextDocument().getUri())
 
   override def didSave(params: DidSaveTextDocumentParams): Unit =
     val uri = params.getTextDocument.getUri
@@ -122,19 +135,16 @@ class LangTextDocumentService(langServer: LangLanguageServer)
     CompletableFuture.supplyAsync { () =>
       val uri = params.getTextDocument().getUri()
       logger.log(s"hover $uri")
-      val info = docMap(uri)
-      info.defs match
+      val defs = ModuleLoading.defs(uri)
+      val p = pos(params.getPosition)
+      firstMatch(defs, _.typeAt(p)) match
         case None => null
-        case Some(defs) =>
-          val p = pos(params.getPosition)
-          firstMatch(defs, _.typeAt(p)) match
-            case None => null
-            case Some(ty) =>
-              val h = new Hover
-              h.setContents(
-                new MarkupContent(MarkupKind.PLAINTEXT, ty.pretty)
-              )
-              h
+        case Some(ty) =>
+          val h = new Hover
+          h.setContents(
+            new MarkupContent(MarkupKind.PLAINTEXT, ty.pretty)
+          )
+          h
     }
 
   inline private def pos(pos: Position): PosInfo =
@@ -151,39 +161,36 @@ class LangTextDocumentService(langServer: LangLanguageServer)
     CompletableFuture.supplyAsync { () =>
       val uri = params.getTextDocument().getUri()
       logger.log(s"definition $uri")
-      val info = docMap(uri)
-      info.defs match
-        case None => null
-        case Some(defs) =>
-          val p = pos(params.getPosition())
-          defs.indexWhere(d => d.matchPos(p)) match
-            case -1 =>
-              val m = mutable.Map.empty[Name, Span]
-              firstMatch(
-                defs,
-                d => {
-                  val res = d.spanOf(p)(m.toMap)
-                  m += (d.name -> d.span)
-                  res
-                }
-              ) match
-                case None => null
-                case Some(spans) =>
-                  Either.forLeft(
-                    spans
-                      .map(span => new Location(uri, spanToRange(span)))
-                      .asJava
-                  )
-            case i =>
-              val x = defs(i).name
-              defs.drop(i + 1).flatMap(_.findGlobal(x)) match
-                case Nil => null
-                case spans =>
-                  Either.forLeft(
-                    spans
-                      .map(span => new Location(uri, spanToRange(span)))
-                      .asJava
-                  )
+      val defs = ModuleLoading.defs(uri)
+      val p = pos(params.getPosition())
+      defs.indexWhere(d => d.matchPos(p)) match
+        case -1 =>
+          val m = mutable.Map.empty[Name, Span]
+          firstMatch(
+            defs,
+            d => {
+              val res = d.spanOf(p)(m.toMap)
+              m += (d.name -> d.span)
+              res
+            }
+          ) match
+            case None => null
+            case Some(spans) =>
+              Either.forLeft(
+                spans
+                  .map(span => new Location(uri, spanToRange(span)))
+                  .asJava
+              )
+        case i =>
+          val x = defs(i).name
+          defs.drop(i + 1).flatMap(_.findGlobal(x)) match
+            case Nil => null
+            case spans =>
+              Either.forLeft(
+                spans
+                  .map(span => new Location(uri, spanToRange(span)))
+                  .asJava
+              )
     }
 
   @tailrec

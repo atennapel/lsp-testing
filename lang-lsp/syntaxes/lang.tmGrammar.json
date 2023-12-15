@@ -9,6 +9,9 @@
     "expression": {
       "patterns": [
         {
+          "include": "#comments"
+        },
+        {
           "include": "#keyword"
         },
         {
@@ -19,6 +22,20 @@
         },
         {
           "include": "#paren-expression"
+        }
+      ]
+    },
+    "comments": {
+      "patterns": [
+        {
+          "begin": "\\-\\-",
+          "end": "$",
+          "name": "comment.line"
+        },
+        {
+          "begin": "\\{\\-",
+          "end": "\\-\\}",
+          "name": "comment.block"
         }
       ]
     },
