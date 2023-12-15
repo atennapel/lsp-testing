@@ -123,12 +123,17 @@ class LangTextDocumentService(langServer: LangLanguageServer)
   ): CompletableFuture[Either[util.List[CompletionItem], CompletionList]] =
     CompletableFuture.supplyAsync { () =>
       logger.log("completion")
-      val item = new CompletionItem
-      item.setLabel("Test completion")
-      item.setInsertText("Blablabla")
-      item.setDetail("Detail")
-      item.setKind(CompletionItemKind.Snippet)
-      Either.forLeft(List(item).asJava)
+      val cs = ModuleLoading.allDefs
+        .sortBy(_.name)
+        .map { d =>
+          val item = new CompletionItem
+          item.setLabel(s"${d.name} : ${d.ty.pretty}")
+          item.setInsertText(d.name)
+          item.setKind(CompletionItemKind.Variable)
+          item
+        }
+        .toList
+      Either.forLeft(cs.asJava)
     }
 
   override def hover(params: HoverParams): CompletableFuture[Hover] =

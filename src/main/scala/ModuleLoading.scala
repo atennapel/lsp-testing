@@ -59,6 +59,7 @@ object ModuleLoading:
           revDeps.foreach(load(_, forced = true))
 
   def defs(uri: String): List[C.Def] = ES.defs(normalizeURI(uri))
+  def allDefs: List[C.Def] = ES.allDefs
 
   private def normalizeURI(uriIn: String): String =
     val uriNorm = uriIn.replace("%3A", ":") match

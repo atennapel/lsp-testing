@@ -31,6 +31,8 @@ object ElabState:
   def defs(uri: String): List[Def] = urimap(uri).defs.toList
   def cachedSource(uri: String): Option[String] = urimap.get(uri).map(_.src)
 
+  def allDefs: List[Def] = urimap.flatMap((_, e) => e.defs).toList
+
   def setModule(uri: String, src: String, dependsOn: Set[String]): Unit =
     urimap += (uri -> Entry(uri, src, mutable.ArrayBuffer.empty, dependsOn))
     dependsOn.foreach(revUri => addRevDep(uri, revUri))
